@@ -1,4 +1,4 @@
-# Instrucciones para Correr
+## Instrucciones para Correr
 1. make
 2. ./dccAdmin
 
