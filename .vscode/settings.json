@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "manager.h": "c",
+        "stdio.h": "c",
+        "unistd.h": "c"
+    }
+}
