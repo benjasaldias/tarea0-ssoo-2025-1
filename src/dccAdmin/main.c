@@ -50,37 +50,37 @@ Proceso *crear_proceso(pid_t pid, const char *nombre)
 // Elimina un proceso de la cola
 Proceso *eliminar_proceso(Proceso *proceso, Proceso *anterior, Cola *cola)
 {
-    // if (kill(proceso->pid, SIGKILL) == 0) {
-    // printf("Proceso %d eliminado.\n", proceso->pid);
+    if (kill(proceso->pid, SIGKILL) == 0) {
+    printf("Proceso %d eliminado.\n", proceso->pid);
+    }
+
+    // if (cola->head == cola->tail)
+    // { // caso es el único en la cola
+    //     cola->head = NULL;
+    //     cola->tail = NULL;
+    //     // printf("cabeza y cola son null ahora\n");
+    // }
+    // else
+    // {
+    //     if (anterior != NULL)
+    //     {
+    //         anterior->siguiente = proceso->siguiente;
+    //     }
+    //     if (cola->head == proceso)
+    //     {
+    //         cola->head = proceso->siguiente;
+    //     }
+    //     if (cola->tail == proceso)
+    //     {
+    //         cola->tail = anterior;
+    //     }
     // }
 
-    if (cola->head == cola->tail)
-    { // caso es el único en la cola
-        cola->head = NULL;
-        cola->tail = NULL;
-        // printf("cabeza y cola son null ahora\n");
-    }
-    else
-    {
-        if (anterior != NULL)
-        {
-            anterior->siguiente = proceso->siguiente;
-        }
-        if (cola->head == proceso)
-        {
-            cola->head = proceso->siguiente;
-        }
-        if (cola->tail == proceso)
-        {
-            cola->tail = anterior;
-        }
-    }
-
-    proceso->pid = -1;
-    Proceso *temp = proceso->siguiente;
-    free(proceso);
-    proceso = NULL;
-    return temp;
+    // proceso->pid = -1;
+    // Proceso *temp = proceso->siguiente;
+    // free(proceso);
+    // proceso = NULL;
+    // return temp;
 }
 
 // Espera que no detiene el programa
@@ -155,9 +155,11 @@ void registro_senal_manual(Proceso *proceso, int senal)
 // Envía la señal de interrupción SIGINT
 void enviar_advertencia(Proceso *proceso)
 {
+    signal(SIGINT, SIG_DFL);
+
     if (kill(proceso->pid, SIGINT) == 0)
     {
-        printf("Advertencia SIGTERM enviada.\n");
+        printf("Advertencia SIGINT enviada a %d.\n", proceso->pid);
         registro_senal_manual(proceso, SIGINT);
     }
     else
@@ -175,7 +177,7 @@ void manejar_sigint(int sig)
 {
     // Proceso* proceso = cola_de_procesos->tail;
     // registro_senal_manual(proceso, sig);
-    printf("\nmi_shell> ");
+    printf("mi_shell> ");
     prompted = true;
     fflush(stdout);
 }
@@ -293,18 +295,24 @@ int main(int argc, char const *argv[])
                 actualizar_procesos(cola_de_procesos);
                 Proceso *actual = cola_de_procesos->head;
                 actual = cola_de_procesos->head;
+
                 while (actual != NULL)
                 {
-                    if (i == 0)
+                    if (i == 0 && kill(actual->pid, 0) == 0)
                     {
                         enviar_advertencia(actual);
                     }
-                    else
+                    else if (i == 1 && kill(actual->pid, 0) == 0)
                     {
                         temp = anterior;
+                        if (actual->pid != 0) {
+                            printf("Estos son los codigos para %d:\n", actual->pid);
+                            printf("%d %d\n", actual->exit_code, actual->signal_value);
+                        }
                         if (actual->exit_code == -1 && actual->signal_value == -1)
                         {
-                            siguiente = eliminar_proceso(actual, anterior, cola_de_procesos);
+                            eliminar_proceso(actual, anterior, cola_de_procesos);
+                            siguiente = actual->siguiente;
                         }
                         else
                         {
