@@ -21,6 +21,7 @@ typedef struct proceso
     pid_t pid;
     char nombre[64];
     time_t inicio;
+    time_t final;
     int exit_code;
     int signal_value;
     struct proceso *siguiente;
@@ -32,6 +33,87 @@ typedef struct Cola
     Proceso *head; // Primer proceso
     Proceso *tail; // Último proceso
 } Cola;
+
+typedef struct Timeout
+{
+    time_t start_time;
+    int duration;
+    struct Timeout *next;
+} Timeout;
+
+Timeout *timeout_list_head = NULL;
+
+void crear_timeout(int duration)
+{
+    Timeout *new_timeout = calloc(1, sizeof(Timeout));
+    new_timeout->start_time = time(NULL);
+    new_timeout->duration = duration;
+    new_timeout->next = timeout_list_head;
+
+    timeout_list_head = new_timeout;
+}
+
+bool process_is_alive(Proceso *process)
+{
+    return (kill(process->pid, 0) == 0);
+}
+
+void print_process(Proceso *process)
+{
+    double tiempo_transcurrido;
+    if (process->final)
+    {
+        tiempo_transcurrido = difftime(process->final, process->inicio);
+    }
+    else
+    {
+        tiempo_transcurrido = difftime(time(NULL), process->inicio);
+    }
+    printf("%d %s %.2f %d %d\n", process->pid, process->nombre, tiempo_transcurrido, process->exit_code, process->signal_value);
+}
+
+void apply_timeouts(Cola *process_list)
+{
+    Timeout *current_timeout = timeout_list_head;
+    Timeout *previous_timeout = NULL;
+
+    while (current_timeout != NULL)
+    {
+        if (difftime(time(NULL), current_timeout->start_time) >= current_timeout->duration)
+        {
+            printf("\nTimeout cumplido!\n");
+            Proceso *current_process = process_list->head;
+            while (current_process != NULL)
+            {
+                if (process_is_alive(current_process) && difftime(current_timeout->start_time, current_process->inicio) >= 0)
+                {
+                    print_process(current_process);
+                    kill(current_process->pid, SIGTERM);
+                }
+                current_process = current_process->siguiente;
+            }
+
+            Timeout *used_timeout = current_timeout;
+            current_timeout = used_timeout->next;
+
+            if (previous_timeout != NULL)
+            {
+                previous_timeout->next = current_timeout;
+            }
+            else
+            {
+                timeout_list_head = current_timeout;
+            }
+
+            free(used_timeout);
+        }
+        else
+        {
+            previous_timeout = current_timeout;
+            current_timeout = current_timeout->next;
+        }
+    }
+}
 
 Proceso *crear_proceso(pid_t pid, const char *nombre)
 {
@@ -119,13 +201,13 @@ void actualizar_procesos(Cola *cola)
                 {
                     kill(actual->pid, SIGTERM);
                     actual->sigterm_time = time(NULL);
-                    printf("Warned\n");
+                    printf("\nWarned\n");
                     fflush(stdout);
                 }
                 else if (difftime(time(NULL), actual->sigterm_time) > 5)
                 {
                     kill(actual->pid, SIGKILL);
-                    printf("Killed\n");
+                    printf("\nKilled\n");
                     fflush(stdout);
                 }
             }
@@ -168,7 +250,7 @@ void enviar_advertencia(Proceso *proceso)
 
     if (kill(proceso->pid, SIGINT) == 0)
     {
-        printf("Advertencia SIGINT enviada a %d.\n", proceso->pid);
+        printf("\nAdvertencia SIGINT enviada a %d.\n", proceso->pid);
         registro_senal_manual(proceso, SIGINT);
     }
     else
@@ -180,16 +262,6 @@ void enviar_advertencia(Proceso *proceso)
 
 Cola *cola_de_procesos = NULL;
 bool prompted = false;
-
-// Manejador de SIGINT (Ctrl+C)
-void manejar_sigint(int sig)
-{
-    // Proceso* proceso = cola_de_procesos->tail;
-    // registro_senal_manual(proceso, sig);
-    printf("mi_shell> ");
-    prompted = true;
-    fflush(stdout);
-}
 
 // obtener exit code y signal value
 void obtener_estado_proceso(Proceso *proceso, pid_t pid, int status)
@@ -230,6 +302,7 @@ void actualizar_child(pid_t pid, int status)
     {
         if (actual->pid == pid)
         {
+            actual->final = time(NULL);
             if (WIFEXITED(status))
             {
                 actual->exit_code = WEXITSTATUS(status);
@@ -265,6 +338,86 @@ void manejador_sigchld(int sig)
     }
 }
 
+void handle_quit()
+{
+    printf("\nTerminando ejecucion de DCCAdmin\n");
+    for (int i = 0; i < 2; i++)
+    {
+        Proceso *anterior = NULL;
+        Proceso *siguiente = NULL;
+        Proceso *temp = NULL;
+        actualizar_procesos(cola_de_procesos);
+        Proceso *actual = cola_de_procesos->head;
+        actual = cola_de_procesos->head;
+
+        while (actual != NULL)
+        {
+            if (i == 0 && kill(actual->pid, 0) == 0)
+            {
+                enviar_advertencia(actual);
+            }
+            else if (i == 1 && kill(actual->pid, 0) == 0)
+            {
+                temp = anterior;
+                if (actual->pid != 0)
+                {
+                    printf("Estos son los codigos para %d:\n", actual->pid);
+                    printf("%d %d\n", actual->exit_code, actual->signal_value);
+                }
+                if (actual->exit_code == -1 && actual->signal_value == -1)
+                {
+                    eliminar_proceso(actual, anterior, cola_de_procesos);
+                    siguiente = actual->siguiente;
+                }
+                else
+                {
+                    siguiente = actual->siguiente;
+                }
+            }
+            anterior = temp;
+            actual = siguiente;
+        }
+        if (i == 0)
+        {
+            for (int i = 0; i < 10; i++)
+            {
+                printf("%d\n", 10 - i);
+                sleep(1);
+            }
+        }
+    }
+
+    printf("DCCAdmin finalizado\n");
+
+    Proceso *actual = cola_de_procesos->head;
+
+    while (actual != NULL)
+    {
+        print_process(actual);
+        actual = actual->siguiente;
+    }
+    free_processes();
+    exit(0);
+}
+
+// Manejador de SIGINT (Ctrl+C)
+void manejar_sigint(int sig)
+{
+    handle_quit();
+}
+
+void free_processes()
+{
+    Proceso *actual = cola_de_procesos->head;
+    while (actual != NULL)
+    {
+        Proceso *temp = actual;
+        actual = actual->siguiente;
+        free(temp);
+    }
+    free(cola_de_procesos);
+}
+
 int main(int argc, char const *argv[])
 {
     if (argc > 1)
@@ -297,6 +450,7 @@ int main(int argc, char const *argv[])
         do
         {
             activity = select(STDIN_FILENO + 1, &set, NULL, NULL, &timeout);
+            apply_timeouts(cola_de_procesos);
         } while (activity < 0 && errno == EINTR);
 
         if (activity < 0)
@@ -317,55 +471,8 @@ int main(int argc, char const *argv[])
             //   EVENTO: QUIT
             if (strcmp(input[0], "quit") == 0)
             {
-                for (int i = 0; i < 2; i++)
-                {
-                    Proceso *anterior = NULL;
-                    Proceso *siguiente = NULL;
-                    Proceso *temp = NULL;
-                    actualizar_procesos(cola_de_procesos);
-                    Proceso *actual = cola_de_procesos->head;
-                    actual = cola_de_procesos->head;
-
-                    while (actual != NULL)
-                    {
-                        if (i == 0 && kill(actual->pid, 0) == 0)
-                        {
-                            enviar_advertencia(actual);
-                        }
-                        else if (i == 1 && kill(actual->pid, 0) == 0)
-                        {
-                            temp = anterior;
-                            if (actual->pid != 0)
-                            {
-                                printf("Estos son los codigos para %d:\n", actual->pid);
-                                printf("%d %d\n", actual->exit_code, actual->signal_value);
-                            }
-                            if (actual->exit_code == -1 && actual->signal_value == -1)
-                            {
-                                eliminar_proceso(actual, anterior, cola_de_procesos);
-                                siguiente = actual->siguiente;
-                            }
-                            else
-                            {
-                                siguiente = actual->siguiente;
-                            }
-                        }
-                        anterior = temp;
-                        actual = siguiente;
-                    }
-                    if (i == 0)
-                    {
-                        // Esperamos 5 segundos a que finalicen los procesos advertidos
-                        // printf("Saliendo...\n");
-                        unsigned int tiempo_restante = sleep(5);
-                        while (tiempo_restante > 0)
-                        {
-                            tiempo_restante = sleep(tiempo_restante);
-                        }
-                    }
-                }
                 free_user_input(input);
-                break;
+                handle_quit();
             }
             else if (strcmp(input[0], "start") == 0) // Comando START
             {
@@ -426,98 +533,51 @@ int main(int argc, char const *argv[])
                     printf("Nombre: %s \n", actual->nombre);
                     printf("Exit Code: %d \n", actual->exit_code);
                     printf("Signal Value: %d \n", actual->signal_value);
-                    // printf("Elapsed time: %d", difftime(time(NULL), actual->inicio));
+                    printf("Elapsed time: %.2f\n", difftime(actual->final, actual->inicio));
                     actual = actual->siguiente;
                 }
             }
             else if (strcmp(input[0], "timeout") == 0) // Comando  TIMEOUT
             {
                 actualizar_procesos(cola_de_procesos);
-                if (input[1] == NULL)
-                {
-                    printf("Error: Debes indicar un tiempo.\n");
-                    continue;
-                }
-
-                // Asegurarse de que input[1] no esté vacío
-                if (strlen(input[1]) == 0)
+                if (input[1] == NULL || input[1][0] == '\0')
                 {
                     printf("Error: Debes indicar un tiempo válido.\n");
                     continue;
                 }
 
-                // Verificar si input[1] es un número válido
-                int is_valid_time = 1;
-                for (int i = 0; input[1][i] != '\0'; i++)
+                char *endptr;
+                long time_value = strtol(input[1], &endptr, 10);
+
+                // Validating that the entire string was a number
+                if (*endptr != '\0' || time_value <= 0)
                 {
-                    if (!isdigit(input[1][i]))
+                    printf("Error: Debes indicar un tiempo válido.\n");
+                    continue;
+                }
+                // int time_value = input[1] - '0';
+                printf("time value ingresado: %ld\n", time_value);
+                Proceso *actual = cola_de_procesos->head;
+                actual = cola_de_procesos->head;
+
+                bool uno_corriendo = false;
+                while (actual != NULL)
+                {
+                    if (process_is_alive(actual))
                     {
-                        is_valid_time = 0;
+                        uno_corriendo = true;
                         break;
                     }
+                    actual = actual->siguiente;
                 }
 
-                if (!is_valid_time)
+                if (!uno_corriendo)
                 {
-                    printf("Error: Debes indicar un tiempo válido.\n");
+                    printf("No hay procesos en ejecución. Timeout no se puede ejecutar.\n");
+                    continue;
                 }
-                else
-                {
-                    int time_value = 0;
-                    for (int i = 0; input[1][i] != '\0'; i++)
-                    {
-                        int digit = input[1][i] - '0';
-                        if (time_value == 0)
-                        {
-                            time_value = digit;
-                        }
-                        else
-                        {
-                            time_value = time_value * 10 + digit;
-                        }
-                    }
-                    // int time_value = input[1] - '0';
-                    printf("time value ingresado: %d\n", time_value);
-                    Proceso *actual = cola_de_procesos->head;
-                    actual = cola_de_procesos->head;
 
-                    bool uno_corriendo = false;
-                    while (actual != NULL)
-                    {
-                        if (actual->exit_code == -1 && actual->signal_value == -1)
-                        {
-                            uno_corriendo = true;
-                            break;
-                        }
-                        actual = actual->siguiente;
-                    }
-
-                    if (uno_corriendo == true)
-                    {
-                        sleep(time_value);
-                        actual = cola_de_procesos->head;
-                        while (actual != NULL)
-                        {
-                            if (actual->exit_code == -1 && actual->signal_value == -1)
-                            {
-                                if (kill(actual->pid, SIGTERM) == 0)
-                                {
-                                    printf("terminado!\n");
-                                }
-                                registro_senal_manual(actual, SIGTERM);
-                                printf("Timeout cumplido!\n");
-                                time_t tiempo_actual = time(NULL);
-                                double tiempo_transcurrido = difftime(tiempo_actual, actual->inicio);
-                                printf("%d %s %f %d %d\n", actual->pid, actual->nombre, tiempo_transcurrido, actual->exit_code, actual->signal_value);
-                            }
-                            actual = actual->siguiente;
-                        }
-                    }
-                    else
-                    {
-                        printf("No hay procesos en ejecución. Timeout no se puede ejecutar.\n");
-                    }
-                }
+                crear_timeout(time_value);
             }
             else
             {
@@ -528,13 +588,6 @@ int main(int argc, char const *argv[])
             fflush(stdout);
         }
     }
-    Proceso *actual = cola_de_procesos->head;
-    while (actual != NULL)
-    {
-        Proceso *temp = actual;
-        actual = actual->siguiente;
-        free(temp);
-    }
-    free(cola_de_procesos);
+    free_processes();
     return 0;
 }
